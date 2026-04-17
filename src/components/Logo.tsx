@@ -13,9 +13,9 @@ export default function Logo({
   const { theme, mounted } = useTheme();
   const src = mounted
     ? theme === "dark"
-      ? "/Logos/Logo-Darkmode.PNG"
-      : "/Logos/Logo-Lightmode.PNG"
-    : "/Logos/Logo-Darkmode.PNG";
+      ? "/Logos/logo-dark.webp"
+      : "/Logos/logo-light.webp"
+    : "/Logos/logo-dark.webp";
   return (
     <img
       src={withBase(src)}
