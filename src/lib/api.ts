@@ -72,6 +72,21 @@ export async function getDiscountedProducts(): Promise<Product[]> {
   return products.filter((p) => p.originalPrice && p.originalPrice > p.price);
 }
 
+export async function getDiscountedByCategory(
+  slug: CategorySlug,
+  limit = 10,
+): Promise<Product[]> {
+  const discounted = products.filter(
+    (p) =>
+      p.categorySlug === slug &&
+      p.originalPrice !== undefined &&
+      p.originalPrice > p.price,
+  );
+  // Shuffle so the order feels fresh on each visit
+  const shuffled = [...discounted].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, limit);
+}
+
 export async function getProductById(id: string): Promise<Product | null> {
   return products.find((p) => p.id === id) ?? null;
 }
