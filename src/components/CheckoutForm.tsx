@@ -6,6 +6,15 @@ import { useCart } from "@/context/CartContext";
 import { submitOrder } from "@/lib/api";
 import OrderSuccess from "./OrderSuccess";
 import { toPersianPrice, toPersianDigits, withBase } from "@/lib/utils";
+import {
+  validateFullName,
+  validateIranianMobile,
+  validateAddress,
+  validatePostalCode,
+  validateProvince,
+  validateCity,
+  toEnglishDigits,
+} from "@/lib/validation";
 
 const PROVINCES = [
   "تهران",
@@ -47,6 +56,14 @@ const STEPS = [
   { key: "review", label: "بررسی نهایی" },
 ];
 
+type ShippingKey =
+  | "fullName"
+  | "phone"
+  | "address"
+  | "postalCode"
+  | "province"
+  | "city";
+
 export default function CheckoutForm() {
   const { items, getCartTotal, clearCart } = useCart();
   const [step, setStep] = useState(0);
@@ -61,22 +78,59 @@ export default function CheckoutForm() {
     province: "",
     city: "",
   });
+  const [touched, setTouched] = useState<Record<ShippingKey, boolean>>({
+    fullName: false,
+    phone: false,
+    address: false,
+    postalCode: false,
+    province: false,
+    city: false,
+  });
   const [paymentMethod, setPaymentMethod] = useState<"online" | "cod">(
     "online",
   );
 
   const total = getCartTotal();
 
-  const updateShipping = (key: string, val: string) =>
+  const updateShipping = (key: ShippingKey, val: string) =>
     setShipping((p) => ({ ...p, [key]: val }));
 
-  const shippingValid =
-    shipping.fullName &&
-    shipping.phone &&
-    shipping.address &&
-    shipping.postalCode &&
-    shipping.province &&
-    shipping.city;
+  const markTouched = (key: ShippingKey) =>
+    setTouched((p) => ({ ...p, [key]: true }));
+
+  const rawErrors: Record<ShippingKey, string | null> = {
+    fullName: validateFullName(shipping.fullName),
+    phone: validateIranianMobile(shipping.phone),
+    address: validateAddress(shipping.address),
+    postalCode: validatePostalCode(shipping.postalCode),
+    province: validateProvince(shipping.province),
+    city: validateCity(shipping.city),
+  };
+  const errors: Record<ShippingKey, string | null> = {
+    fullName: touched.fullName ? rawErrors.fullName : null,
+    phone: touched.phone ? rawErrors.phone : null,
+    address: touched.address ? rawErrors.address : null,
+    postalCode: touched.postalCode ? rawErrors.postalCode : null,
+    province: touched.province ? rawErrors.province : null,
+    city: touched.city ? rawErrors.city : null,
+  };
+  const shippingValid = Object.values(rawErrors).every((e) => e === null);
+
+  const handleContinueShipping = () => {
+    if (!shippingValid) {
+      // Reveal every error at once when the user tries to advance.
+      setTouched({
+        fullName: true,
+        phone: true,
+        address: true,
+        postalCode: true,
+        province: true,
+        city: true,
+      });
+      return;
+    }
+    setStep(1);
+  };
 
   const handleSubmitOrder = async () => {
     setLoading(true);
@@ -104,8 +158,15 @@ export default function CheckoutForm() {
     );
   }
 
-  const inputClass =
-    "w-full bg-search border border-line rounded-xl px-4 py-3 text-sm text-fg-primary outline-none focus:border-accent transition-colors placeholder:text-fg-muted";
+  // Base + error-state input classes, shared by all shipping fields.
+  const baseInput =
+    "w-full bg-search border rounded-xl px-4 py-3 text-sm text-fg-primary outline-none transition-colors placeholder:text-fg-muted";
+  const inputClass = (err: string | null) =>
+    `${baseInput} ${
+      err
+        ? "border-danger focus:border-danger"
+        : "border-line focus:border-accent"
+    }`;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -150,12 +211,17 @@ export default function CheckoutForm() {
               </label>
               <input
                 type="text"
-                required
                 value={shipping.fullName}
                 onChange={(e) => updateShipping("fullName", e.target.value)}
-                className={inputClass}
+                onBlur={() => markTouched("fullName")}
+                aria-invalid={!!errors.fullName}
+                maxLength={60}
+                className={inputClass(errors.fullName)}
                 placeholder="نام کامل"
               />
+              {errors.fullName && (
+                <p className="text-xs text-danger mt-1.5">{errors.fullName}</p>
+              )}
             </div>
             <div>
               <label className="block text-sm text-fg-secondary mb-1.5">
@@ -163,13 +229,23 @@ export default function CheckoutForm() {
               </label>
               <input
                 type="tel"
-                required
                 value={shipping.phone}
-                onChange={(e) => updateShipping("phone", e.target.value)}
-                className={inputClass}
-                placeholder="۰۹۱۲۳۴۵۶۷۸۹"
+                // Normalize Persian/Arabic digits as the user types so the stored
+                // value is always ASCII — simpler to validate and submit.
+                onChange={(e) =>
+                  updateShipping("phone", toEnglishDigits(e.target.value))
+                }
+                onBlur={() => markTouched("phone")}
+                aria-invalid={!!errors.phone}
+                inputMode="tel"
+                maxLength={15}
+                className={inputClass(errors.phone)}
+                placeholder="09123456789"
                 dir="ltr"
               />
+              {errors.phone && (
+                <p className="text-xs text-danger mt-1.5">{errors.phone}</p>
+              )}
             </div>
           </div>
           <div>
@@ -177,13 +253,21 @@ export default function CheckoutForm() {
               آدرس کامل
             </label>
             <textarea
-              required
               rows={3}
               value={shipping.address}
               onChange={(e) => updateShipping("address", e.target.value)}
-              className={`${inputClass} resize-none`}
+              onBlur={() => markTouched("address")}
+              aria-invalid={!!errors.address}
+              maxLength={250}
+              className={`${inputClass(errors.address)} resize-none`}
               placeholder="آدرس دقیق محل ارسال"
             />
+            <div className="flex items-center justify-between mt-1.5">
+              <p className="text-xs text-danger">{errors.address ?? ""}</p>
+              <p className="text-xs text-fg-muted tabular">
+                {shipping.address.length}/250
+              </p>
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
@@ -192,8 +276,13 @@ export default function CheckoutForm() {
               </label>
               <select
                 value={shipping.province}
-                onChange={(e) => updateShipping("province", e.target.value)}
-                className={inputClass}
+                onChange={(e) => {
+                  updateShipping("province", e.target.value);
+                  markTouched("province");
+                }}
+                onBlur={() => markTouched("province")}
+                aria-invalid={!!errors.province}
+                className={inputClass(errors.province)}
               >
                 <option value="">انتخاب استان</option>
                 {PROVINCES.map((p) => (
@@ -202,6 +291,9 @@ export default function CheckoutForm() {
                   </option>
                 ))}
               </select>
+              {errors.province && (
+                <p className="text-xs text-danger mt-1.5">{errors.province}</p>
+              )}
             </div>
             <div>
               <label className="block text-sm text-fg-secondary mb-1.5">
@@ -209,12 +301,17 @@ export default function CheckoutForm() {
               </label>
               <input
                 type="text"
-                required
                 value={shipping.city}
                 onChange={(e) => updateShipping("city", e.target.value)}
-                className={inputClass}
+                onBlur={() => markTouched("city")}
+                aria-invalid={!!errors.city}
+                maxLength={40}
+                className={inputClass(errors.city)}
                 placeholder="شهر"
               />
+              {errors.city && (
+                <p className="text-xs text-danger mt-1.5">{errors.city}</p>
+              )}
             </div>
             <div>
               <label className="block text-sm text-fg-secondary mb-1.5">
@@ -222,21 +319,30 @@ export default function CheckoutForm() {
               </label>
               <input
                 type="text"
-                required
                 value={shipping.postalCode}
-                onChange={(e) => updateShipping("postalCode", e.target.value)}
-                className={inputClass}
+                onChange={(e) =>
+                  updateShipping("postalCode", toEnglishDigits(e.target.value))
+                }
+                onBlur={() => markTouched("postalCode")}
+                aria-invalid={!!errors.postalCode}
+                inputMode="numeric"
+                maxLength={10}
+                className={inputClass(errors.postalCode)}
                 placeholder="کد پستی ۱۰ رقمی"
                 dir="ltr"
               />
+              {errors.postalCode && (
+                <p className="text-xs text-danger mt-1.5">
+                  {errors.postalCode}
+                </p>
+              )}
             </div>
           </div>
           <div className="pt-2">
             <button
               type="button"
-              disabled={!shippingValid}
-              onClick={() => setStep(1)}
-              className="btn-primary px-8 py-3 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleContinueShipping}
+              className="btn-primary px-8 py-3 rounded-xl font-semibold text-sm"
             >
               ادامه
             </button>
