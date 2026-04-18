@@ -185,6 +185,18 @@ body {
   scrollbar-width: none;
 }
 
+/* Prevent iOS Safari from auto-zooming on focus.
+   iOS zooms in whenever an input's computed font-size is < 16px, so bump
+   all form controls to 16px on touch-width viewports. The layout itself
+   still uses Tailwind's text-sm everywhere else. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 /* Buttons */
 .btn-primary {
   background: rgb(var(--accent));
