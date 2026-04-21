@@ -1,143 +1,113 @@
 "use client";
 
-import { useState } from "react";
-import { Loader2, Check, ChevronLeft } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Loader2, Check, ChevronLeft, MapPin, Plus, Star } from "lucide-react";
 import { useCart } from "@/context/CartContext";
-import { submitOrder } from "@/lib/api";
+import { apiClient, ApiRequestError } from "@/lib/apiClient";
 import OrderSuccess from "./OrderSuccess";
+import AddressFormDialog from "./profile/AddressFormDialog";
+import type { Address } from "./profile/ProfileAddressesTab";
 import { toPersianPrice, toPersianDigits, withBase } from "@/lib/utils";
-import {
-  validateFullName,
-  validateIranianMobile,
-  validateAddress,
-  validatePostalCode,
-  validateProvince,
-  validateCity,
-  toEnglishDigits,
-} from "@/lib/validation";
-
-const PROVINCES = [
-  "تهران",
-  "اصفهان",
-  "فارس",
-  "خراسان رضوی",
-  "آذربایجان شرقی",
-  "آذربایجان غربی",
-  "مازندران",
-  "کرمان",
-  "گیلان",
-  "خوزستان",
-  "سیستان و بلوچستان",
-  "مرکزی",
-  "هرمزگان",
-  "کرمانشاه",
-  "گلستان",
-  "البرز",
-  "همدان",
-  "یزد",
-  "لرستان",
-  "اردبیل",
-  "بوشهر",
-  "قم",
-  "زنجان",
-  "کردستان",
-  "سمنان",
-  "چهارمحال و بختیاری",
-  "خراسان شمالی",
-  "خراسان جنوبی",
-  "ایلام",
-  "کهگیلویه و بویراحمد",
-  "قزوین",
-];
 
 const STEPS = [
-  { key: "shipping", label: "اطلاعات ارسال" },
+  { key: "shipping", label: "آدرس ارسال" },
   { key: "payment", label: "روش پرداخت" },
   { key: "review", label: "بررسی نهایی" },
 ];
 
-type ShippingKey =
-  | "fullName"
-  | "phone"
-  | "address"
-  | "postalCode"
-  | "province"
-  | "city";
+interface CreateOrderResponse {
+  id: string;
+  orderNumber: string;
+}
 
+/**
+ * Checkout is now authenticated + address-book-driven:
+ *   1. Pick a saved address (or add a new one via the reusable dialog).
+ *   2. Pick payment method.
+ *   3. Review and submit to POST /orders.
+ *
+ * The backend is the source of truth for stock + total + order number.
+ * We send `{ items, addressId, paymentMethod, notes? }`; the server
+ * re-prices, snapshots the address, decrements stock transactionally,
+ * and returns the canonical order.
+ */
 export default function CheckoutForm() {
   const { items, getCartTotal, clearCart } = useCart();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [orderNumber, setOrderNumber] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const [shipping, setShipping] = useState({
-    fullName: "",
-    phone: "",
-    address: "",
-    postalCode: "",
-    province: "",
-    city: "",
-  });
-  const [touched, setTouched] = useState<Record<ShippingKey, boolean>>({
-    fullName: false,
-    phone: false,
-    address: false,
-    postalCode: false,
-    province: false,
-    city: false,
-  });
-  const [paymentMethod, setPaymentMethod] = useState<"online" | "cod">(
-    "online",
+  // Address book state — fetched on mount, refetched after a new address
+  // is added via the inline dialog.
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [addrLoading, setAddrLoading] = useState(true);
+  const [addrError, setAddrError] = useState<string | null>(null);
+  const [selectedAddrId, setSelectedAddrId] = useState<string | null>(null);
+  const [addrDialogOpen, setAddrDialogOpen] = useState(false);
+
+  const [paymentMethod, setPaymentMethod] = useState<"ONLINE" | "COD">(
+    "ONLINE",
   );
 
   const total = getCartTotal();
 
-  const updateShipping = (key: ShippingKey, val: string) =>
-    setShipping((p) => ({ ...p, [key]: val }));
+  const loadAddresses = useCallback(async () => {
+    setAddrLoading(true);
+    setAddrError(null);
+    try {
+      const data = await apiClient.get<Address[]>("/user/addresses");
+      setAddresses(data);
+      // Auto-select: prefer the default, otherwise the first one. Only do
+      // this if nothing is selected yet so we don't override a user pick
+      // after a refetch.
+      setSelectedAddrId((prev) => {
+        if (prev && data.some((a) => a.id === prev)) return prev;
+        const def = data.find((a) => a.isDefault);
+        return def?.id ?? data[0]?.id ?? null;
+      });
+    } catch (err) {
+      setAddrError(
+        err instanceof ApiRequestError ? err.message : "خطا در دریافت آدرس‌ها",
+      );
+    } finally {
+      setAddrLoading(false);
+    }
+  }, []);
 
-  const markTouched = (key: ShippingKey) =>
-    setTouched((p) => ({ ...p, [key]: true }));
+  useEffect(() => {
+    loadAddresses();
+  }, [loadAddresses]);
 
-  const rawErrors: Record<ShippingKey, string | null> = {
-    fullName: validateFullName(shipping.fullName),
-    phone: validateIranianMobile(shipping.phone),
-    address: validateAddress(shipping.address),
-    postalCode: validatePostalCode(shipping.postalCode),
-    province: validateProvince(shipping.province),
-    city: validateCity(shipping.city),
-  };
-  const errors: Record<ShippingKey, string | null> = {
-    fullName: touched.fullName ? rawErrors.fullName : null,
-    phone: touched.phone ? rawErrors.phone : null,
-    address: touched.address ? rawErrors.address : null,
-    postalCode: touched.postalCode ? rawErrors.postalCode : null,
-    province: touched.province ? rawErrors.province : null,
-    city: touched.city ? rawErrors.city : null,
-  };
-  const shippingValid = Object.values(rawErrors).every((e) => e === null);
+  const selectedAddr = addresses.find((a) => a.id === selectedAddrId) ?? null;
 
   const handleContinueShipping = () => {
-    if (!shippingValid) {
-      // Reveal every error at once when the user tries to advance.
-      setTouched({
-        fullName: true,
-        phone: true,
-        address: true,
-        postalCode: true,
-        province: true,
-        city: true,
-      });
-      return;
-    }
+    if (!selectedAddr) return;
     setStep(1);
   };
 
   const handleSubmitOrder = async () => {
+    if (!selectedAddr) return;
+    setSubmitError(null);
     setLoading(true);
-    const result = await submitOrder({ ...shipping, paymentMethod });
-    setLoading(false);
-    setOrderNumber(result.orderNumber);
-    clearCart();
+    try {
+      const res = await apiClient.post<CreateOrderResponse>("/orders", {
+        items: items.map((it) => ({
+          productId: it.id,
+          quantity: it.quantity,
+        })),
+        addressId: selectedAddr.id,
+        paymentMethod,
+      });
+      setOrderNumber(res.orderNumber);
+      clearCart();
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiRequestError ? err.message : "ثبت سفارش انجام نشد.",
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (orderNumber) {
@@ -157,16 +127,6 @@ export default function CheckoutForm() {
       </div>
     );
   }
-
-  // Base + error-state input classes, shared by all shipping fields.
-  const baseInput =
-    "w-full bg-search border rounded-xl px-4 py-3 text-sm text-fg-primary outline-none transition-colors placeholder:text-fg-muted";
-  const inputClass = (err: string | null) =>
-    `${baseInput} ${
-      err
-        ? "border-danger focus:border-danger"
-        : "border-line focus:border-accent"
-    }`;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -200,153 +160,110 @@ export default function CheckoutForm() {
         ))}
       </div>
 
-      {/* Step 1: Shipping */}
+      {/* Step 1: Address picker */}
       {step === 0 && (
         <div className="space-y-5 animate-fade-in">
-          <h2 className="text-xl font-bold text-fg-primary">اطلاعات ارسال</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-fg-secondary mb-1.5">
-                نام و نام خانوادگی
-              </label>
-              <input
-                type="text"
-                value={shipping.fullName}
-                onChange={(e) => updateShipping("fullName", e.target.value)}
-                onBlur={() => markTouched("fullName")}
-                aria-invalid={!!errors.fullName}
-                maxLength={60}
-                className={inputClass(errors.fullName)}
-                placeholder="نام کامل"
-              />
-              {errors.fullName && (
-                <p className="text-xs text-danger mt-1.5">{errors.fullName}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm text-fg-secondary mb-1.5">
-                شماره تلفن
-              </label>
-              <input
-                type="tel"
-                value={shipping.phone}
-                // Normalize Persian/Arabic digits as the user types so the stored
-                // value is always ASCII — simpler to validate and submit.
-                onChange={(e) =>
-                  updateShipping("phone", toEnglishDigits(e.target.value))
-                }
-                onBlur={() => markTouched("phone")}
-                aria-invalid={!!errors.phone}
-                inputMode="tel"
-                maxLength={15}
-                className={inputClass(errors.phone)}
-                placeholder="09123456789"
-                dir="ltr"
-              />
-              {errors.phone && (
-                <p className="text-xs text-danger mt-1.5">{errors.phone}</p>
-              )}
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm text-fg-secondary mb-1.5">
-              آدرس کامل
-            </label>
-            <textarea
-              rows={3}
-              value={shipping.address}
-              onChange={(e) => updateShipping("address", e.target.value)}
-              onBlur={() => markTouched("address")}
-              aria-invalid={!!errors.address}
-              maxLength={250}
-              className={`${inputClass(errors.address)} resize-none`}
-              placeholder="آدرس دقیق محل ارسال"
-            />
-            <div className="flex items-center justify-between mt-1.5">
-              <p className="text-xs text-danger">{errors.address ?? ""}</p>
-              <p className="text-xs text-fg-muted tabular">
-                {shipping.address.length}/250
-              </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm text-fg-secondary mb-1.5">
-                استان
-              </label>
-              <select
-                value={shipping.province}
-                onChange={(e) => {
-                  updateShipping("province", e.target.value);
-                  markTouched("province");
-                }}
-                onBlur={() => markTouched("province")}
-                aria-invalid={!!errors.province}
-                className={inputClass(errors.province)}
-              >
-                <option value="">انتخاب استان</option>
-                {PROVINCES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-              {errors.province && (
-                <p className="text-xs text-danger mt-1.5">{errors.province}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm text-fg-secondary mb-1.5">
-                شهر
-              </label>
-              <input
-                type="text"
-                value={shipping.city}
-                onChange={(e) => updateShipping("city", e.target.value)}
-                onBlur={() => markTouched("city")}
-                aria-invalid={!!errors.city}
-                maxLength={40}
-                className={inputClass(errors.city)}
-                placeholder="شهر"
-              />
-              {errors.city && (
-                <p className="text-xs text-danger mt-1.5">{errors.city}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm text-fg-secondary mb-1.5">
-                کد پستی
-              </label>
-              <input
-                type="text"
-                value={shipping.postalCode}
-                onChange={(e) =>
-                  updateShipping("postalCode", toEnglishDigits(e.target.value))
-                }
-                onBlur={() => markTouched("postalCode")}
-                aria-invalid={!!errors.postalCode}
-                inputMode="numeric"
-                maxLength={10}
-                className={inputClass(errors.postalCode)}
-                placeholder="کد پستی ۱۰ رقمی"
-                dir="ltr"
-              />
-              {errors.postalCode && (
-                <p className="text-xs text-danger mt-1.5">
-                  {errors.postalCode}
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="pt-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-fg-primary">آدرس ارسال</h2>
             <button
               type="button"
-              onClick={handleContinueShipping}
-              className="btn-primary px-8 py-3 rounded-xl font-semibold text-sm"
+              onClick={() => setAddrDialogOpen(true)}
+              className="flex items-center gap-1.5 text-sm font-semibold text-accent-text hover:opacity-80"
             >
-              ادامه
+              <Plus size={15} />
+              آدرس جدید
             </button>
           </div>
+
+          {addrLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 size={24} className="animate-spin text-fg-muted" />
+            </div>
+          ) : addrError ? (
+            <div
+              role="alert"
+              className="text-sm text-danger bg-danger-soft border border-danger/30 rounded-lg px-3 py-2"
+            >
+              {addrError}
+            </div>
+          ) : addresses.length === 0 ? (
+            <div className="text-center py-10 border border-dashed border-line rounded-xl">
+              <MapPin
+                size={28}
+                className="mx-auto mb-3 text-fg-muted opacity-70"
+              />
+              <p className="text-sm text-fg-secondary mb-3">
+                هنوز آدرسی ثبت نکرده‌اید.
+              </p>
+              <button
+                type="button"
+                onClick={() => setAddrDialogOpen(true)}
+                className="btn-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold"
+              >
+                <Plus size={15} />
+                افزودن آدرس
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {addresses.map((a) => {
+                const active = a.id === selectedAddrId;
+                return (
+                  <label
+                    key={a.id}
+                    className={`block p-4 rounded-xl border cursor-pointer transition-colors ${
+                      active
+                        ? "border-accent bg-accent-soft"
+                        : "border-line hover:border-line-hover"
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="radio"
+                        name="address"
+                        value={a.id}
+                        checked={active}
+                        onChange={() => setSelectedAddrId(a.id)}
+                        className="accent-[var(--accent)] mt-1"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-semibold text-fg-primary text-sm">
+                            {a.fullName}
+                          </span>
+                          {a.isDefault && (
+                            <span className="flex items-center gap-1 text-[11px] font-semibold text-accent-text bg-accent-soft px-2 py-0.5 rounded-full border border-accent/30">
+                              <Star size={10} />
+                              پیش‌فرض
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-fg-secondary leading-5">
+                          {a.province}، {a.city}، {a.address}
+                        </p>
+                        <p className="text-xs text-fg-muted mt-1">
+                          کد پستی: {a.postalCode} • {a.phone}
+                        </p>
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          {addresses.length > 0 && (
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleContinueShipping}
+                disabled={!selectedAddr}
+                className="btn-primary px-8 py-3 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                ادامه
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -357,12 +274,12 @@ export default function CheckoutForm() {
           <div className="space-y-3">
             {[
               {
-                value: "online" as const,
+                value: "ONLINE" as const,
                 label: "پرداخت آنلاین",
                 desc: "پرداخت از طریق درگاه بانکی",
               },
               {
-                value: "cod" as const,
+                value: "COD" as const,
                 label: "پرداخت در محل",
                 desc: "پرداخت هنگام تحویل سفارش",
               },
@@ -412,7 +329,7 @@ export default function CheckoutForm() {
       )}
 
       {/* Step 3: Review */}
-      {step === 2 && (
+      {step === 2 && selectedAddr && (
         <div className="space-y-6 animate-fade-in">
           <h2 className="text-xl font-bold text-fg-primary">بررسی نهایی</h2>
 
@@ -421,6 +338,7 @@ export default function CheckoutForm() {
             {items.map((item) => (
               <div key={item.id} className="flex items-center gap-3 p-3">
                 <div className="w-12 h-12 rounded-lg overflow-hidden bg-bg-elevated shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={withBase(item.image)}
                     alt={item.name}
@@ -449,23 +367,25 @@ export default function CheckoutForm() {
           <div className="bg-bg-card border border-line rounded-xl p-4 space-y-2 text-sm">
             <h3 className="font-semibold text-fg-primary">اطلاعات ارسال</h3>
             <p className="text-fg-secondary">
-              {shipping.fullName} — {shipping.phone}
+              {selectedAddr.fullName} — {selectedAddr.phone}
             </p>
             <p className="text-fg-secondary">
-              {shipping.province}، {shipping.city}، {shipping.address}
+              {selectedAddr.province}، {selectedAddr.city}،{" "}
+              {selectedAddr.address}
             </p>
-            <p className="text-fg-muted">کد پستی: {shipping.postalCode}</p>
+            <p className="text-fg-muted">کد پستی: {selectedAddr.postalCode}</p>
           </div>
 
           {/* Payment */}
           <div className="bg-bg-card border border-line rounded-xl p-4 text-sm">
             <h3 className="font-semibold text-fg-primary mb-1">روش پرداخت</h3>
             <p className="text-fg-secondary">
-              {paymentMethod === "online" ? "پرداخت آنلاین" : "پرداخت در محل"}
+              {paymentMethod === "ONLINE" ? "پرداخت آنلاین" : "پرداخت در محل"}
             </p>
           </div>
 
-          {/* Total */}
+          {/* Total — still shown from local cart for instant feedback; the
+              server re-prices on submit and is authoritative. */}
           <div className="flex items-center justify-between bg-accent-soft rounded-xl p-4">
             <span className="font-bold text-fg-primary">مبلغ قابل پرداخت</span>
             <span className="text-xl font-bold text-accent-text tabular">
@@ -473,11 +393,21 @@ export default function CheckoutForm() {
             </span>
           </div>
 
+          {submitError && (
+            <div
+              role="alert"
+              className="text-sm text-danger bg-danger-soft border border-danger/30 rounded-lg px-3 py-2"
+            >
+              {submitError}
+            </div>
+          )}
+
           <div className="flex gap-3 pt-2">
             <button
               type="button"
               onClick={() => setStep(1)}
-              className="px-6 py-3 rounded-xl font-medium text-sm border border-line text-fg-secondary hover:bg-bg-card-hover transition-colors"
+              disabled={loading}
+              className="px-6 py-3 rounded-xl font-medium text-sm border border-line text-fg-secondary hover:bg-bg-card-hover transition-colors disabled:opacity-50"
             >
               بازگشت
             </button>
@@ -485,13 +415,27 @@ export default function CheckoutForm() {
               type="button"
               onClick={handleSubmitOrder}
               disabled={loading}
-              className="btn-primary flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm"
+              className="btn-primary flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm disabled:opacity-60"
             >
               {loading ? <Loader2 size={18} className="animate-spin" /> : null}
               ثبت سفارش
             </button>
           </div>
         </div>
+      )}
+
+      {addrDialogOpen && (
+        <AddressFormDialog
+          onClose={() => setAddrDialogOpen(false)}
+          onSaved={async () => {
+            setAddrDialogOpen(false);
+            // Refetch so the new address (and any isDefault reshuffle) shows up.
+            // We can't easily pick out the new id here without racing a refetch,
+            // so we clear the selection and let the loader reapply the default.
+            setSelectedAddrId(null);
+            await loadAddresses();
+          }}
+        />
       )}
     </div>
   );

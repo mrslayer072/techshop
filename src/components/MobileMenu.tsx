@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   X,
   ChevronDown,
@@ -9,8 +10,12 @@ import {
   Headphones,
   Tablet,
   Plug,
+  LogIn,
+  LogOut,
+  User as UserIcon,
 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useAuth } from "@/context/AuthContext";
 
 const CATEGORIES = [
   { slug: "mobiles", name: "موبایل", Icon: Smartphone },
@@ -28,6 +33,8 @@ export default function MobileMenu({
   onClose: () => void;
 }) {
   const [catOpen, setCatOpen] = useState(false);
+  const { user, hydrated, logout } = useAuth();
+  const router = useRouter();
 
   useEffect(() => {
     document.body.style.overflow = isOpen ? "hidden" : "";
@@ -35,6 +42,12 @@ export default function MobileMenu({
       document.body.style.overflow = "";
     };
   }, [isOpen]);
+
+  const handleLogout = async () => {
+    onClose();
+    await logout();
+    router.push("/");
+  };
 
   return (
     <>
@@ -114,6 +127,50 @@ export default function MobileMenu({
           >
             تماس با ما
           </Link>
+
+          {/* Auth block — pinned under the main nav. Gated on `hydrated`
+              so we don't flash the wrong affordance on first paint. */}
+          {hydrated && (
+            <div className="mt-2 pt-2 border-t border-line">
+              {user ? (
+                <>
+                  <div className="px-5 py-3">
+                    <div className="text-sm font-semibold text-fg-primary truncate">
+                      {user.name}
+                    </div>
+                    <div className="text-xs text-fg-muted truncate" dir="ltr">
+                      {user.email}
+                    </div>
+                  </div>
+                  <Link
+                    href="/profile"
+                    onClick={onClose}
+                    className="flex items-center gap-2 px-5 py-3.5 text-fg-primary hover:bg-bg-card-hover transition-colors font-medium"
+                  >
+                    <UserIcon size={16} className="text-fg-muted" />
+                    حساب کاربری من
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="flex items-center gap-2 w-full px-5 py-3.5 text-danger hover:bg-danger-soft transition-colors font-medium"
+                  >
+                    <LogOut size={16} />
+                    خروج از حساب
+                  </button>
+                </>
+              ) : (
+                <Link
+                  href="/login"
+                  onClick={onClose}
+                  className="flex items-center gap-2 px-5 py-3.5 text-fg-primary hover:bg-bg-card-hover transition-colors font-medium"
+                >
+                  <LogIn size={16} className="text-fg-muted" />
+                  ورود / ثبت‌نام
+                </Link>
+              )}
+            </div>
+          )}
         </nav>
       </div>
     </>

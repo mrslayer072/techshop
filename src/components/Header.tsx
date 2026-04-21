@@ -1,17 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { ShoppingCart, Menu, ChevronDown } from "lucide-react";
+import { ShoppingCart, Menu, ChevronDown, LogIn } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import Logo from "./Logo";
 import ThemeToggle from "./ThemeToggle";
 import CategoryDropdown from "./CategoryDropdown";
 import MobileMenu from "./MobileMenu";
+import UserMenu from "./UserMenu";
 import { useCart } from "@/context/CartContext";
+import { useAuth } from "@/context/AuthContext";
 import { toPersianDigits } from "@/lib/utils";
 
 export default function Header() {
   const { getCartCount, openDrawer } = useCart();
+  const { user, hydrated } = useAuth();
   const [scrolled, setScrolled] = useState(false);
   const [catHover, setCatHover] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -115,6 +118,25 @@ export default function Header() {
                 </span>
               )}
             </button>
+
+            {/* Auth affordance — desktop only. Gated on `hydrated` so we
+                don't flash a "login" button for a user who's actually
+                signed in while context reads localStorage. */}
+            {hydrated &&
+              (user ? (
+                <div className="hidden md:block">
+                  <UserMenu />
+                </div>
+              ) : (
+                <Link
+                  href="/login"
+                  className="hidden md:flex items-center gap-1.5 h-10 px-3 rounded-lg border border-line hover:border-line-hover hover:bg-bg-card-hover transition-colors text-sm font-medium text-fg-secondary hover:text-fg-primary"
+                >
+                  <LogIn size={15} />
+                  ورود / ثبت‌نام
+                </Link>
+              ))}
+
             {/* Mobile hamburger */}
             <button
               type="button"

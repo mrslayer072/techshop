@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Vazirmatn } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { AuthProvider } from "@/context/AuthContext";
 import { CartProvider } from "@/context/CartContext";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -50,13 +51,17 @@ export default function RootLayout({
       </head>
       <body>
         <ThemeProvider>
-          <CartProvider>
-            <Header />
-            <main className="min-h-[calc(100vh-64px)]">{children}</main>
-            <Footer />
-            <CartDrawer />
-            <Toast />
-          </CartProvider>
+          {/* AuthProvider sits outside CartProvider so the cart (and anything
+              nested deeper) can read auth state without prop-drilling. */}
+          <AuthProvider>
+            <CartProvider>
+              <Header />
+              <main className="min-h-[calc(100vh-64px)]">{children}</main>
+              <Footer />
+              <CartDrawer />
+              <Toast />
+            </CartProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
